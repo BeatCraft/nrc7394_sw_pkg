@@ -51,13 +51,19 @@ $ sudo apt install raspberrypi-kernel-headers
 
 raspi-config で spi と serial port を有効にし serial console は無効にする。
 
+
+https://github.com/BeatCraft/nrc7394_sw_pkg
+または
+https://github.com/BeatCraft/nrc7394_sw_pkg
+を Raspberry Pi の /home/pi/ にダウンロードする。
+
+
 user mode spi driver を無効にするため nrc7394_sw_pkg 同梱の dts をビルドし配置する。
 $ cd nrc7394_sw_pkg-1.2.1/dts/
 $ dtc -I dts -O dtb -o newracom.dtbo newracom_for_5.16_or_later.dts
 $ sudo cp newracom.dtbo /boot/overlays/
 これを反映するため /boot/config.txt に記述する。
 同時に内蔵 wifi と blutooth を無効にするための記述も /boot/config.txt に追加する。
-
 dtoverlay=disable-bt
 dtoverlay=disable-wifi
 dtoverlay=newracom
@@ -101,13 +107,6 @@ https://github.com/newracom/nrc7394_sw_pkg/blob/master/package/doc/UG-7394-001-E
 または
 https://github.com/BeatCraft/nrc7394_sw_pkg/blob/master/package/doc/UG-7394-001-EVK%20User%20Guide%20(Host%20Mode).pdf
 に従って start.py を実行し AP または STA または sniffer として動作
-
-
-
-
-
-
-
 
 
 
