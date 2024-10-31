@@ -1,0 +1,107 @@
+
+Raspberry Pi OS Bookwarm で使用する手順
+
+
+Debian 12 ベースの Raspberry OS Bookwarm で
+BC-11AH-ASKEY-RASPI を使用する手順
+
+
+
+nrc7394_sw_pkg の中の script は
+Network が dhcpcd で管理されていることを想定しているが、
+Debian 12 ベースの Raspberry OS Bookwarm は
+NetworkManager で Nerwork が管理されるよう変更されたので
+そのままでは動作しない。
+script の方を修正しないで動作させる場合は以下の作業が必要になる。
+
+
+NetworkManager を停止して dhcpcd5 をインストールする必要があるが、
+GUI も NetworkManager での管理に合わせて変更され 
+GUI 関連パッケージにも依存関係が設定されてしまっているので
+まず GUI なしの Raspberry Pi OS Lite で起動し、
+修正や設定変更を加えた後 
+GUI が必要であれば wayland などを追加インストールして設定する。
+
+
+1.
+RasPi Imager で Raspberry Pi OS Lite を microSD に書き込み
+起動 microSD を作成して起動する。
+
+2024年10月31日現在 64bit 版で動作確認している。
+
+2024-10-22-raspios-bookworm-arm64-lite.img.xz
+https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2024-10-28/2024-10-22-raspios-bookworm-arm64-lite.img.xz
+
+を書き込んで起動。
+
+
+
+Replacing NetworkManager with dhcpcd on Bookworm (a janky method)
+https://forums.raspberrypi.com/viewtopic.php?t=360586
+
+に従って NetworkManager を停止し dhcpcd5 をインストールする。
+$ sudo systemctl disable NetworkManager
+$ sudo systemctl stop NetworkManager
+$ sudo apt-get update
+$ sudo apt-get install -y dhcpcd5
+$ sudo cp /usr/share/dhcpcd/hooks/10-wpa_supplicant /lib/dhcpcd/dhcpcd-hooks/
+$ sudo reboot
+
+また Bookwarm では NAT の設定などは nftables で行うよう変更され
+default では iptables がインストールされていないのでインストールする。
+$ sudo apt install iptables
+
+
+2.
+nrc7394_sw_pkg をダウンロードし設定
+
+他の設定は Raspberry Pi OS legacy 向けと同じだが、
+Raspberry Pi OS bookwarm では kernel header 関連パッケージは最初からインストールされている。
+pi@raspberrypi:~ $ dpkg -l | grep linux-headers
+ii  linux-headers-6.6.51+rpt-common-rpi  1:6.6.51-1+rpt3                  all          Common header files for Linux 6.6.51+rpt-rpi
+ii  linux-headers-6.6.51+rpt-rpi-2712    1:6.6.51-1+rpt3                  arm64        Header files for Linux 6.6.51+rpt-rpi-2712
+ii  linux-headers-6.6.51+rpt-rpi-v8      1:6.6.51-1+rpt3                  arm64        Header files for Linux 6.6.51+rpt-rpi-v8
+ii  linux-headers-rpi-2712               1:6.6.51-1+rpt3                  arm64        Header files for Linux rpi-2712 configuration (meta-package)
+ii  linux-headers-rpi-v8                 1:6.6.51-1+rpt3                  arm64        Header files for Linux rpi-v8 configuration (meta-package
+
+nrc ドライバーをビルドする必要があるが、
+Bookwarm では kernel が 6.6.x になっており
+そのままでは nrc ドライバーがビルドできない。
+https://github.com/newracom/nrc7292_sw_pkg/issues/91
+の問題と同じ。
+
+
+そこで以下のような内容の変更を加えてからビルドする。
+
+$ diff -u nrc-netlink.c.orig nrc-netlink.c
+--- nrc-netlink.c.orig	2024-10-31 19:46:24.783550951 +0900
++++ nrc-netlink.c	2024-10-31 16:39:03.340610006 +0900
+@@ -31,7 +31,7 @@
+ 
+ 
+ #ifdef CONFIG_SUPPORT_NEW_NETLINK
+-static int nrc_nl_pre_doit(const struct genl_ops *ops,
++static int nrc_nl_pre_doit(const struct genl_split_ops *ops,
+ 			   struct sk_buff *skb, struct genl_info *info)
+ #else
+ static int nrc_nl_pre_doit(struct genl_ops *ops,
+@@ -42,7 +42,7 @@
+ }
+ 
+ #ifdef CONFIG_SUPPORT_NEW_NETLINK
+-static void nrc_nl_post_doit(const struct genl_ops *ops,
++static void nrc_nl_post_doit(const struct genl_split_ops *ops,
+ 			     struct sk_buff *skb, struct genl_info *info)
+ #else
+ static void nrc_nl_post_doit(struct genl_ops *ops,
+
+
+$ cd nrc7394_sw_pkg-1.2.1/package/src/nrc
+$ make
+
+後は legacy と同じ設定を加える。
+
+
+これで Bookwarm でも動作する。
+ 
+
