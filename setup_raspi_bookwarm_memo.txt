@@ -103,5 +103,12 @@ $ make
 
 
 これで Bookwarm でも動作する。
+
+ただし、sniffer mode に必要な newrapeak (11ah 対応改変済み Wireshark) は
+ソースでなくビルド済みの deb package で提供されており、
+この改変済み Wireshark は bullseye のGUI ライブラリを前提にビルドされているので
+bookworm に強制的にインストールしてもうまく動作しない。
+(ライブラリ不整合を解決すると他の GUI アプリケーションが動作しなくなる）
+tshark のみであれば動作可能と思われる。
  
 
