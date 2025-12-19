@@ -36,8 +36,8 @@
 #include "nrc-mac80211.h"
 #include "nrc-hif.h"
 #include "wim.h"
-#include "nrc-debug.h"
 #include "nrc-pm.h"
+#include "nrc-debug.h"
 
 /**
  * DOC: STA powersaving
@@ -47,7 +47,7 @@
 
 static int tx_h_sta_pm(struct nrc_trx_data *tx)
 {
-#ifdef CONFIG_SUPPORT_AFTER_KERNEL_3_0_36
+#if defined(CONFIG_SUPPORT_AFTER_KERNEL_3_0_36) && defined(CONFIG_SUPPORT_PS)
 	struct ieee80211_hw *hw = tx->nw->hw;
 #endif
 	struct sk_buff *skb = tx->skb;
@@ -246,16 +246,13 @@ static int ieee80211_disconnect_sta(struct ieee80211_vif *vif,
 
 	return 0;
 }
-
 #if KERNEL_VERSION(4, 15, 0) > LINUX_VERSION_CODE
 static void ap_max_idle_period_expire(unsigned long data)
-#else
-static void ap_max_idle_period_expire(struct timer_list *t)
-#endif
 {
-#if KERNEL_VERSION(4, 15, 0) > LINUX_VERSION_CODE
 	struct nrc_vif *i_vif = (struct nrc_vif *) data;
 #else
+static void ap_max_idle_period_expire(struct timer_list *t)
+{
 	struct nrc_vif *i_vif = from_timer(i_vif, t, max_idle_timer);
 #endif
 	struct nrc_sta *i_sta = NULL, *tmp = NULL;

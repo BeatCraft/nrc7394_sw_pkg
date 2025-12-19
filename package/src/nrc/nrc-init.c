@@ -19,6 +19,7 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
+#include <linux/err.h>
 #include <linux/gpio.h>
 #include "nrc.h"
 #include "nrc-init.h"
@@ -128,7 +129,7 @@ MODULE_PARM_DESC(bss_max_idle, "BSS Max Idle");
 /**
  * enable/disable the s1g short beacon
  */
-bool enable_short_bi = 0;
+bool enable_short_bi = 1;
 module_param(enable_short_bi, bool, 0600);
 MODULE_PARM_DESC(enable_short_bi, "Enable Short Beacon Interval");
 
@@ -260,6 +261,20 @@ module_param(kr_band, int, 0600);
 MODULE_PARM_DESC(kr_band, "Specify KR band (KR USN1(1) or KR USN5(2))");
 
 /**
+ * Set configuration of SG Band
+ */
+int sg_band = -1;
+module_param(sg_band, int, 0600);
+MODULE_PARM_DESC(sg_band, "Specify SG band (866-869 MHz(8) or 920-925 MHz(9))");
+
+/**
+ * Set configuration of TW Band
+ */
+int tw_band = -1;
+module_param(tw_band, int, 0600);
+MODULE_PARM_DESC(tw_band, "Specify TW band (8xxMHz(8) or 9xxMHz(9))");
+
+/**
  * Debug Level All
  */
 bool debug_level_all = false;
@@ -349,9 +364,6 @@ uint8_t ap_rc_default_mcs = 0xff;
 uint8_t sta_rc_default_mcs = 0xff;
 //module_param(sta_rc_default_mcs, byte, 0600);
 //MODULE_PARM_DESC(sta_rc_default_mcs, "STA Default MCS");
-
-/* not convert bss_max_idle value using usf */
-bool no_convert_usf = false;
 
 /**
  * Power save pretend value for no response STA
@@ -580,7 +592,7 @@ static void nrc_on_fw_ready(struct sk_buff *skb, struct nrc *nw)
 	dev_kfree_skb(skb);
 }
 
-static int nrc_fw_start(struct nrc *nw)
+int nrc_fw_start(struct nrc *nw)
 {
 	struct sk_buff *skb_req, *skb_resp;
 	struct wim_drv_info_param *p;
@@ -869,9 +881,10 @@ struct nrc *nrc_nw_alloc(struct device *dev, struct nrc_hif_device *hdev)
 
 	hw = nrc_mac_alloc_hw(sizeof(struct nrc), NRC_DRIVER_NAME);
 
-	if (!hw) {
-			return NULL;
-	}
+	if (IS_ERR(hw))
+		return ERR_CAST(hw);
+	if (!hw)
+		return NULL;
 
 	nw = hw->priv;
 	nw->hw = hw;
@@ -907,9 +920,11 @@ struct nrc *nrc_nw_alloc(struct device *dev, struct nrc_hif_device *hdev)
 		goto err_hw_free;
 	}
 
-	nw->workqueue = create_singlethread_workqueue("nrc_wq");
-	nw->ps_wq = create_singlethread_workqueue("nrc_ps_wq");
-	nw->restart_workqueue = create_singlethread_workqueue("nrc_restart");
+       nw->workqueue = create_singlethread_workqueue("nrc_wq");
+       nw->ps_wq = create_singlethread_workqueue("nrc_ps_wq");
+       nw->restart_workqueue = create_singlethread_workqueue("nrc_restart");
+       if (!nw->workqueue || !nw->ps_wq || !nw->restart_workqueue)
+               goto err_wq;
 
 	INIT_DELAYED_WORK(&nw->roc_finish, nrc_mac_roc_finish);
 	INIT_DELAYED_WORK(&nw->rm_vendor_ie_wowlan_pattern, nrc_rm_vendor_ie_wowlan_pattern);
@@ -952,6 +967,15 @@ struct nrc *nrc_nw_alloc(struct device *dev, struct nrc_hif_device *hdev)
 
 	return nw;
 
+err_wq:
+       if (nw->restart_workqueue)
+               destroy_workqueue(nw->restart_workqueue);
+       if (nw->ps_wq)
+               destroy_workqueue(nw->ps_wq);
+       if (nw->workqueue)
+               destroy_workqueue(nw->workqueue);
+       nrc_wim_response_deinit(nw);
+ 
 err_hw_free:
 	nrc_mac_free_hw(hw);
 

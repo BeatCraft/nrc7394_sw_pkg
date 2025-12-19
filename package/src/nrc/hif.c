@@ -17,6 +17,7 @@
 #include <net/mac80211.h>
 #include <linux/gpio.h>
 #include <linux/ip.h>
+#include <linux/ratelimit.h>
 #include <linux/tcp.h>
 
 #include "nrc-hif.h"
@@ -261,6 +262,19 @@ static void nrc_hif_work(struct work_struct *work)
 				ret = nrc_hif_write(hdev, skb->data, skb->len);
 				ret = HIF_TX_COMPLETE;
 			}
+
+			/* Teledatics: credit-starved, re-queue SKB and retry when FW returns credits */
+// 			 if (ret == -ENOSPC || ret == -EAGAIN || ret == -EBUSY || ret == -EIO    || ret == -EREMOTEIO) {
+// 				 if (net_ratelimit())
+// 					dev_dbg(nw->dev, "TX credits exhausted\n");
+//
+// 				// skb_queue_head(&hdev->queue[i], skb);
+// 				queue_work(nw->workqueue, &hdev->work);
+//
+// 				ret = HIF_TX_QUEUED;
+// 				break;
+// 			}
+
 			WARN_ON(ret < 0);
 
 			if (ret != HIF_TX_QUEUED)
@@ -347,8 +361,7 @@ static void nrc_hif_ps_work(struct work_struct *work)
 * Parameters : skb(socket buffer)
 * Returns : T/F (bool) T:TCP ACK, F:not TCP ACK
 *******************************************************************************/
-#if 0
-static bool is_tcp_ack(struct sk_buff *skb)
+bool is_tcp_ack(struct sk_buff *skb)
 {
 	struct hif *hif;
 	struct ieee80211_hdr *mhdr;
@@ -379,14 +392,14 @@ static bool is_tcp_ack(struct sk_buff *skb)
 
 	return false;
 }
-#endif
+
 /*******************************************************************************
 * FunctionName : is_mgmt
 * Description : Check if the skb is a management frame 
 * Parameters : skb(socket buffer)
 * Returns : T/F (bool) T:management frame, F:not management frame
 *******************************************************************************/
-static bool is_mgmt(struct sk_buff *skb)
+bool is_mgmt(struct sk_buff *skb)
 {
 	struct hif *hif;
 	struct ieee80211_hdr *mhdr;
@@ -412,7 +425,7 @@ static bool is_mgmt(struct sk_buff *skb)
 * Parameters : skb(socket buffer)
 * Returns : T/F (bool)
 *******************************************************************************/
-static bool is_urgent_frame(struct sk_buff *skb)
+bool is_urgent_frame(struct sk_buff *skb)
 {
 	bool ret = false;
 	if (is_mgmt(skb))
@@ -525,7 +538,7 @@ static int nrc_hif_enqueue_skb(struct nrc *nw, struct sk_buff *skb)
 /**
  * nrc_hif_tx_wim - trasmit a wim message to target
  */
-static int nrc_xmit_wim(struct nrc *nw, struct sk_buff *skb, enum HIF_SUBTYPE stype)
+int nrc_xmit_wim(struct nrc *nw, struct sk_buff *skb, enum HIF_SUBTYPE stype)
 {
 	struct hif *hif;
 	struct ieee80211_tx_info *txi = IEEE80211_SKB_CB(skb);

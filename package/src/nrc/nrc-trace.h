@@ -24,6 +24,12 @@
 #include "nrc.h"
 #include "nrc-hif-cspi.h"
 
+#if KERNEL_VERSION(6, 10, 0) <= NRC_TARGET_KERNEL_VERSION
+#define __assign_str_two_arg(dst, src) __assign_str(dst)
+#else
+#define __assign_str_two_arg __assign_str
+#endif
+
 #if !defined(_NRC_TRACE_H_)
 
 static char *mgmt_str[] = {
@@ -114,8 +120,8 @@ DECLARE_EVENT_CLASS(nrc_hdr_event,
 		struct ieee80211_hdr *hdr = (void *)data;
 		__le16 fc = hdr->frame_control;
 
-		__assign_str(device, dev_name(nw->dev));
-		__assign_str(driver, dev_driver_string(nw->dev));
+		__assign_str_two_arg(device, dev_name(nw->dev));
+		__assign_str_two_arg(driver, dev_driver_string(nw->dev));
 		__entry->fc_type = (fc & cpu_to_le16(IEEE80211_FCTL_FTYPE));
 		__entry->fc_subtype = (fc & cpu_to_le16(IEEE80211_FCTL_STYPE));
 		__entry->fc_etc = fc & cpu_to_le16(0xFF00);
@@ -190,8 +196,8 @@ DECLARE_EVENT_CLASS(nrc_payload_event,
 	),
 
 	TP_fast_assign(
-		__assign_str(device, dev_name(nw->dev));
-		__assign_str(driver, dev_driver_string(nw->dev));
+		__assign_str_two_arg(device, dev_name(nw->dev));
+		__assign_str_two_arg(driver, dev_driver_string(nw->dev));
 		__entry->len = len - nrc_frm_hdr_len(data, len);
 		memcpy(__get_dynamic_array(payload),
 		       data + nrc_frm_hdr_len(data, len), min_t(size_t, __entry->len, MAX_PAYLOAD));
@@ -248,7 +254,7 @@ DECLARE_EVENT_CLASS(nrc_hif_slot_event,
 	),
 
 	TP_fast_assign(
-		__assign_str(msg, msg);
+		__assign_str_two_arg(msg, msg);
 		__entry->dir = dir;
 		__entry->head = priv->slot[dir].head;
 		__entry->tail = priv->slot[dir].tail;

@@ -89,26 +89,26 @@ typedef struct _vendor_cmd_info{
 char nrc_cc[2];
 
 #define CHAN2G(freq)			\
-{								\
+{					\
 	.band = NL80211_BAND_2GHZ,	\
 	.center_freq = (freq),		\
-	.hw_value = ((freq-2407)/5),\
-	.max_power = 20,			\
+	.hw_value = ((freq-2407)/5),	\
+	.max_power = 20,		\
 }
 
 #define CHAN5G(freq)			\
-{								\
+{					\
 	.band = NL80211_BAND_5GHZ,	\
 	.center_freq = (freq),		\
-	.hw_value = ((freq-5000)/5),\
-	.max_power = 20,			\
+	.hw_value = ((freq-5000)/5),	\
+	.max_power = 20,		\
 }
 
-#define NRC_CONFIGURE_FILTERS	\
-	(FIF_ALLMULTI				\
-	|FIF_PSPOLL					\
+#define NRC_CONFIGURE_FILTERS		\
+	(FIF_ALLMULTI			\
+	|FIF_PSPOLL			\
 	|FIF_BCN_PRBRESP_PROMISC	\
-	|FIF_PROBE_REQ				\
+	|FIF_PROBE_REQ			\
 	)
 
 #define FREQ_TO_100KHZ(mhz, khz) (mhz * 10 + khz / 100)
@@ -457,7 +457,7 @@ static void nrc_flush_txq(struct nrc *nw)
 #endif
 }
 
-static unsigned int nrc_ac_credit(struct nrc *nw, int ac)
+unsigned int nrc_ac_credit(struct nrc *nw, int ac)
 {
 	int ret;
 
@@ -998,7 +998,11 @@ static int nrc_mac_start(struct ieee80211_hw *hw)
 	return 0;
 }
 
+#if KERNEL_VERSION(6,11,0) <= NRC_TARGET_KERNEL_VERSION
+void nrc_mac_stop(struct ieee80211_hw *hw, bool suspend)
+#else
 void nrc_mac_stop(struct ieee80211_hw *hw)
+#endif
 {
 	struct nrc *nw = hw->priv;
 	int ret = 0;
@@ -1076,7 +1080,7 @@ bool nrc_access_vif(struct nrc *nw)
 	return false;
 }
 
-static const char *iftype_string(enum nl80211_iftype iftype)
+const char *iftype_string(enum nl80211_iftype iftype)
 {
 	switch (iftype) {
 	case NL80211_IFTYPE_UNSPECIFIED: return "UNSPECIFIED";
@@ -1110,6 +1114,67 @@ void nrc_mac_roc_finish(struct work_struct *work)
 #ifdef CONFIG_USE_SCAN_TIMEOUT
 static void nrc_mac_scan_timeout(struct work_struct *work);
 #endif
+
+struct first_sta_ctx {
+        struct ieee80211_sta *sta;
+};
+
+static void nrc_first_sta_cb(void *data, struct ieee80211_sta *sta)
+{
+        struct first_sta_ctx *ctx = data;
+
+        if (!ctx->sta)                  /* keep the **first** one only */
+                ctx->sta = sta;
+}
+
+static void nrc_tp_refresh_worker(struct work_struct *ws)
+{
+        struct nrc *nw = container_of(to_delayed_work(ws),
+                                      struct nrc, tp_refresh_work);
+        u32 tput = 200;
+	struct sk_buff *skb_resp;
+	struct ieee80211_sta *sta = NULL;
+	unsigned int delay = 0;
+
+	rcu_read_lock();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+        ieee80211_iterate_stations_atomic(nw->hw, nrc_first_sta_cb, &sta);
+#else
+        ieee80211_iterate_stations(nw->hw, nrc_first_sta_cb, &sta);
+#endif
+
+	rcu_read_unlock();
+
+	if(!sta)
+		goto done;
+
+	skb_resp = nrc_xmit_wim_simple_request_wait(nw, WIM_CMD_GET_TX_STATS, (WIM_RESP_TIMEOUT * 30));
+	if(skb_resp) {
+		struct wim *wim = (struct wim *)skb_resp->data;
+		struct wim_tlv *tlv = (struct wim_tlv *)(wim + 1);
+		struct nrc_tx_stats* tx_stats = (struct nrc_tx_stats*) tlv->v;
+		// nrc_common_dbg("mcs:%d bw:%d gi:%d", tx_stats->mcs, tx_stats->bw, tx_stats->gi);
+		if (tx_stats->bw < 3 && tx_stats->mcs < 11) {
+			nrc_stats_update_tx_stats(tx_stats);
+		}
+		dev_kfree_skb(skb_resp);
+	}
+
+	tput = nrc_stats_metric(sta->addr);
+	/* prevent overflow in mac80211 */
+	if (tput < 200)
+		tput = 200;
+
+	// nrc_common_dbg("tput:%d", tput);
+
+        if (tput != atomic_read(&nw->cached_tp_kbps))
+                atomic_set(&nw->cached_tp_kbps, tput);
+done:
+        /* adaptive interval */
+	delay = sta ? 1000 : 3000;
+        schedule_delayed_work(&nw->tp_refresh_work, msecs_to_jiffies(delay));
+}
+
 
 static int nrc_mac_add_interface(struct ieee80211_hw *hw,
 				 struct ieee80211_vif *vif)
@@ -1232,6 +1297,11 @@ static int nrc_mac_add_interface(struct ieee80211_hw *hw,
 	INIT_DELAYED_WORK(&i_vif->scan_timeout, nrc_mac_scan_timeout);
 #endif
 
+	/* read expected throughput asynchronously */
+	INIT_DELAYED_WORK(&nw->tp_refresh_work, nrc_tp_refresh_worker);
+	atomic_set(&nw->cached_tp_kbps, 2300000);      /* sane initial value */
+	schedule_delayed_work(&nw->tp_refresh_work, 0);/* kick immediately */
+
 	if (vif->type == NL80211_IFTYPE_MESH_POINT)
 		signal_monitor = true;
 
@@ -1321,6 +1391,10 @@ static void nrc_mac_remove_interface(struct ieee80211_hw *hw,
 	struct nrc_vif *i_vif = to_i_vif(vif);
 	int ret;
 
+	/* cancel async throughput update */
+	if (nw->tp_refresh_work.work.func)
+		cancel_delayed_work_sync(&nw->tp_refresh_work);
+
 	if (vif->type == NL80211_IFTYPE_MONITOR || vif->p2p){
 		if(vif->type == NL80211_IFTYPE_MONITOR){
 			nrc_ampdu_mon_deinit();
@@ -1357,8 +1431,12 @@ static void nrc_mac_remove_interface(struct ieee80211_hw *hw,
 		(vif->type == NL80211_IFTYPE_STATION)) {
 		nrc_vcmd_backup_del_all_entry(i_vif->index);
 
-		if ((vif->type == NL80211_IFTYPE_STATION) && (i_vif->index < VIF_MAX))
-			cancel_delayed_work_sync(&nrc_vcmd_backup_get_info_addr(i_vif->index)->vcmd_backup_reinstall);
+		if ((vif->type == NL80211_IFTYPE_STATION) && (i_vif->index < VIF_MAX)) {
+			VCMD_BACKUP_INFO *info = nrc_vcmd_backup_get_info_addr(i_vif->index);
+			if (info && info->vcmd_backup_reinstall.work.func)
+				cancel_delayed_work_sync(&info->vcmd_backup_reinstall);
+}
+
 	}
 
 #ifdef CONFIG_USE_TXQ
@@ -1709,14 +1787,20 @@ static int nrc_mac_config(struct ieee80211_hw *hw, u32 changed)
 #endif /* defined(CONFIG_SUPPORT_BD) */
 #ifdef CONFIG_SUPPORT_CHANNEL_INFO
 	struct cfg80211_chan_def chandef = {0,};
-	memcpy(&chandef, &hw->conf.chandef, sizeof(struct cfg80211_chan_def));
-	memcpy(&ch, hw->conf.chandef.chan, sizeof(struct ieee80211_channel));
-	chandef.chan = &ch;
+	if(hw)
+		memcpy(&chandef, &hw->conf.chandef, sizeof(struct cfg80211_chan_def));
+	if(hw && hw->conf.chandef.chan){
+		memcpy(&ch, hw->conf.chandef.chan, sizeof(struct ieee80211_channel));
+		chandef.chan = &ch;
+	}
 #else
 	struct ieee80211_conf chandef = {0,};
-	memcpy(&chandef, &hw->conf, sizeof(struct ieee80211_conf));
-	memcpy(&ch, hw->conf.channel, sizeof(struct ieee80211_channel));
-	chandef.channel = &ch;
+	if(hw)
+		memcpy(&chandef, &hw->conf, sizeof(struct ieee80211_conf));
+	if(hw && hw->conf.channel){
+		memcpy(&ch, hw->conf.channel, sizeof(struct ieee80211_channel));
+		chandef.channel = &ch;
+	}
 #endif
 
 	nrc_mac_dbg("%s: changed: 0x%x\n", __FUNCTION__, changed);
@@ -1840,7 +1924,7 @@ static int nrc_mac_config(struct ieee80211_hw *hw, u32 changed)
 			} else {
 				return ret;
 			}
-		} else if (ieee80211_hw_check(hw, SUPPORTS_PS)) {
+		} else if (0 && ieee80211_hw_check(hw, SUPPORTS_PS)) {
 			if (!nw->ps_enabled) {
 				if (power_save >= NRC_PS_DEEPSLEEP_TIM)
 					return ret;
@@ -1898,13 +1982,13 @@ static int nrc_mac_config(struct ieee80211_hw *hw, u32 changed)
 		(changed & IEEE80211_CONF_CHANGE_IDLE) &&
 		nw->scan_mode == NRC_SCAN_MODE_IDLE) {
 		nrc_mac_dbg("%s: changed: IEEE80211_CONF_CHANGE_IDLE\n", __FUNCTION__);
-		if (hw->conf.flags & IEEE80211_CONF_IDLE) {
-			dev_info(nw->dev, "Changing to IDLE\n");
-			nrc_ps_set_mode(nw, NRC_PS_DEEPSLEEP_NONTIM, -1);
-		} else {
-			dev_info(nw->dev, "Changing to Active\n");
+		// if (hw->conf.flags & IEEE80211_CONF_IDLE) {
+		// 	dev_info(nw->dev, "Changing to IDLE\n");
+		// 	nrc_ps_set_mode(nw, NRC_PS_DEEPSLEEP_NONTIM, -1);
+		// } else {
+			// dev_info(nw->dev, "Changing to Active\n");
 			nrc_ps_set_mode(nw, NRC_PS_NONE, 2000);
-		}
+		// }
 	}
 
 
@@ -2486,7 +2570,7 @@ int nrc_mac_sta_state(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 		/* set default max_idle_period from AP */
 		nrc_mac_dbg("%s: set default max_idle_period with AP's period: %lu", __FUNCTION__, i_vif->max_idle_period);
-		if (nrc_mac_is_s1g(nw) && !no_convert_usf) {
+		if (nrc_mac_is_s1g(nw)) {
 			/* Convert in USF Format (Value (14bit) * USF(2bit)) and save it */
 			i_sta->max_idle.period = convert_usf(i_vif->max_idle_period);
 		} else {
@@ -2815,7 +2899,7 @@ static void change_scan_mode(struct nrc *nw, enum NRC_SCAN_MODE new_mode)
 	mutex_unlock(&nw->state_mtx);
 }
 
-static void scan_complete(struct ieee80211_hw *hw, bool aborted)
+void scan_complete(struct ieee80211_hw *hw, bool aborted)
 {
 	struct nrc *nw = hw->priv;
 
@@ -2831,7 +2915,7 @@ static void scan_complete(struct ieee80211_hw *hw, bool aborted)
 
 	if (idle_mode && hw->conf.flags & IEEE80211_CONF_IDLE) {
 		dev_info(nw->dev, "Changing to IDLE after scan\n");
-		nrc_ps_set_mode(nw, NRC_PS_DEEPSLEEP_NONTIM, -1);
+		// nrc_ps_set_mode(nw, NRC_PS_DEEPSLEEP_NONTIM, -1);
 	}
 }
 
@@ -2955,7 +3039,7 @@ __nrc_mac_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 out_idle:
 	if (idle_mode && (hw->conf.flags & IEEE80211_CONF_IDLE)) {
 		dev_info(nw->dev, "Changing to IDLE after scan fail\n");
-		nrc_ps_set_mode(nw, NRC_PS_DEEPSLEEP_NONTIM, -1);
+		// nrc_ps_set_mode(nw, NRC_PS_DEEPSLEEP_NONTIM, -1);
 	}
 
 	return ret;
@@ -3393,23 +3477,34 @@ static void nrc_mac_channel_policy(void *data, u8 *mac,
 	struct wireless_dev *wdev = i_vif->dev->ieee80211_ptr;
 #endif
 
-	if (!wdev)
+	WARN_ON(!data);
+
+#ifdef CONFIG_SUPPORT_CHANNEL_INFO
+	if (!chan_to_follow->chan)
+		return;
+#else
+	if (!chan_to_follow->channel)
+		return;
+#endif
+
+	if (!wdev || !data)
 		return;
 
 #ifdef CONFIG_SUPPORT_CHANNEL_INFO
 #ifdef CONFIG_USE_LINK_ID
 	chandef = wdev_chandef(wdev, vif->bss_conf.link_id);
-	if (chandef->chan &&
-		chandef->chan->center_freq ==
+
+	if (chan_to_follow->chan && chandef && chandef->chan &&
+	    chandef->chan->center_freq ==
 		chan_to_follow->chan->center_freq)
 #else
-	if (wdev->chandef.chan &&
-		wdev->chandef.chan->center_freq ==
+	if (chan_to_follow->chan && wdev->chandef.chan &&
+	    wdev->chandef.chan->center_freq ==
 		chan_to_follow->chan->center_freq)
 #endif /* ifdef CONFIG_USE_LINK_ID */
 #else
-	if (wdev->channel &&
-		wdev->channel->center_freq ==
+	if (chan_to_follow->channel && wdev->channel &&
+	    wdev->channel->center_freq ==
 		chan_to_follow->channel->center_freq)
 #endif /* ifdef CONFIG_SUPPORT_CHANNEL_INFO */
 		return;
@@ -3550,12 +3645,23 @@ static void nrc_mac_change_chanctx(struct ieee80211_hw *hw,
 			ctx->def.center_freq1, ctx->def.center_freq2);
 }
 
+
+#if KERNEL_VERSION(5, 19, 0) <= NRC_TARGET_KERNEL_VERSION
+static int nrc_mac_assign_vif_chanctx(struct ieee80211_hw *hw,
+               struct ieee80211_vif *vif,
+               struct ieee80211_bss_conf *link_conf,
+               struct ieee80211_chanctx_conf *ctx)
+#else
 static int nrc_mac_assign_vif_chanctx(struct ieee80211_hw *hw,
 		struct ieee80211_vif *vif,
 		struct ieee80211_chanctx_conf *ctx)
+#endif
 {
 	struct nrc *nw = hw->priv;
 	struct sk_buff *skb;
+#if KERNEL_VERSION(5, 19, 0) <= NRC_TARGET_KERNEL_VERSION
+       (void)link_conf;
+#endif
 
 	nrc_mac_dbg("%s, vif[type:%d, addr:%pM] %d MHz/width: %d/cfreqs:%d/%d MHz\n",
 			__func__, vif->type, vif->addr,
@@ -3582,9 +3688,16 @@ static int nrc_mac_assign_vif_chanctx(struct ieee80211_hw *hw,
 	return 0;
 }
 
+#if KERNEL_VERSION(5, 19, 0) <= NRC_TARGET_KERNEL_VERSION
+static void nrc_mac_unassign_vif_chanctx(struct ieee80211_hw *hw,
+               struct ieee80211_vif *vif,
+               struct ieee80211_bss_conf *link_conf,
+               struct ieee80211_chanctx_conf *ctx)
+#else
 static void nrc_mac_unassign_vif_chanctx(struct ieee80211_hw *hw,
 		struct ieee80211_vif *vif,
 		struct ieee80211_chanctx_conf *ctx)
+#endif
 {
 	nrc_mac_dbg("%s, vif[type:%d, addr:%pM] %d MHz/width: %d/cfreqs:%d/%d MHz\n",
 			__func__, vif->type, vif->addr,
@@ -3682,7 +3795,7 @@ static int nrc_pre_channel_switch(struct ieee80211_hw *hw,struct ieee80211_vif *
 }
 
 #if KERNEL_VERSION(6, 7, 0) <= NRC_TARGET_KERNEL_VERSION
-static int nrc_post_channel_switch(struct ieee80211_hw *hw, struct ieee80211_vif *vif, struct ieee80211_bss_conf *bss_conf)
+static int nrc_post_channel_switch(struct ieee80211_hw *hw, struct ieee80211_vif *vif, struct ieee80211_bss_conf *link_conf)
 #else
 static int nrc_post_channel_switch(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 #endif
@@ -3709,7 +3822,7 @@ static struct wiphy_wowlan_support nrc_wowlan_support = {
 	.max_pkt_offset = 16,
 };
 
-static void nrc_mac_set_wakeup(struct ieee80211_hw *hw, bool enabled)
+void nrc_mac_set_wakeup(struct ieee80211_hw *hw, bool enabled)
 {
 	struct nrc *nw = hw->priv;
 	nw->wowlan_enabled = enabled;
@@ -3717,7 +3830,7 @@ static void nrc_mac_set_wakeup(struct ieee80211_hw *hw, bool enabled)
 	return;
 }
 
-static int nrc_mac_resume(struct ieee80211_hw *hw)
+int nrc_mac_resume(struct ieee80211_hw *hw)
 {
 	struct nrc *nw = hw->priv;
 
@@ -3734,7 +3847,7 @@ static int nrc_mac_resume(struct ieee80211_hw *hw)
 	return 0;
 }
 
-static int nrc_mac_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
+int nrc_mac_suspend(struct ieee80211_hw *hw, struct cfg80211_wowlan *wowlan)
 {
 	struct nrc *nw = hw->priv;
 	struct sk_buff *skb;
@@ -3813,8 +3926,6 @@ static u32 nrc_get_expected_throughput(struct ieee80211_hw *hw,
 static u32 nrc_get_expected_throughput(struct ieee80211_sta *sta)
 #endif
 {
-	uint32_t tput = 0;
-	struct sk_buff *skb_resp;
 #if KERNEL_VERSION(4, 8, 0) <= NRC_TARGET_KERNEL_VERSION
 	struct nrc *nw = hw->priv;
 #else
@@ -3823,30 +3934,8 @@ static u32 nrc_get_expected_throughput(struct ieee80211_sta *sta)
 	i_sta = to_i_sta(sta);
 	nw = i_sta->nw;
 #endif
+	return atomic_read(&nw->cached_tp_kbps);
 
-	if (!sta)
-		return 0;
-
-	skb_resp = nrc_xmit_wim_simple_request_wait(nw, WIM_CMD_GET_TX_STATS, (WIM_RESP_TIMEOUT * 30));
-	if(skb_resp) {
-		struct wim *wim = (struct wim *)skb_resp->data;
-		struct wim_tlv *tlv = (struct wim_tlv *)(wim + 1);
-		struct nrc_tx_stats* tx_stats = (struct nrc_tx_stats*) tlv->v;
-		nrc_common_dbg("mcs:%d bw:%d gi:%d", tx_stats->mcs, tx_stats->bw, tx_stats->gi);
-		if (tx_stats->bw < 3 && tx_stats->mcs < 11) {
-			nrc_stats_update_tx_stats(tx_stats);
-		}
-		dev_kfree_skb(skb_resp);
-	} else {
-
-	}
-
-	tput = nrc_stats_metric(sta->addr);
-	/* prevent overflow in mac80211 */
-	if (tput < 200)
-		tput = 200;
-
-	return tput;
 }
 
 #define MPDU_LEN_THRESHOLD			511 		/* See lmac_11ah.h  */
@@ -4202,7 +4291,7 @@ void remotecmd_callback(unsigned long ptr)
 	struct wireless_dev *wdev = params->wdev;
 	u8 subcmd = params->subcmd;
 #else
-static void remotecmd_callback(struct timer_list *t)
+void remotecmd_callback(struct timer_list *t)
 {
 	struct wiphy *wiphy = remotecmd_params.wiphy;
 	struct wireless_dev *wdev = remotecmd_params.wdev;
@@ -4211,7 +4300,7 @@ static void remotecmd_callback(struct timer_list *t)
 	nrc_vendor_cmd_remove(wiphy, wdev, subcmd);
 }
 
-static void remotecmd_schedule_off(struct wiphy *wiphy, struct wireless_dev *wdev,
+void remotecmd_schedule_off(struct wiphy *wiphy, struct wireless_dev *wdev,
 				u8 subcmd, const u8 cntdwn, u16 beacon_int)
 {
 	remotecmd_params.wiphy = wiphy;
