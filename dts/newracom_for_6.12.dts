@@ -1,0 +1,99 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2712", "brcm,bcm2835";
+
+    /*
+     * SPI0:
+     *   CS0/GPIO8 -> nrc80211
+     *   CS1/GPIO7 -> spidev0.1 として残す
+     */
+    fragment@0 {
+        target = <&spi0>;
+        __overlay__ {
+            status = "okay";
+
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            /*
+             * GPIO8 = CE0
+             * GPIO7 = CE1
+             */
+            cs-gpios = <&gpio 8 1>, <&gpio 7 1>;
+
+            /*
+             * CS0 の spidev0.0 は nrc80211 と衝突するので無効化
+             */
+            spidev@0 {
+                reg = <0>;
+                status = "disabled";
+            };
+
+            /*
+             * CS1 は従来通り /dev/spidev0.1 として残す
+             */
+            spidev@1 {
+                compatible = "spidev";
+                reg = <1>;
+                #address-cells = <1>;
+                #size-cells = <0>;
+                spi-max-frequency = <125000000>;
+                status = "okay";
+            };
+
+            /*
+             * NRC7394 / nrc80211 device on SPI0 CS0
+             */
+            nrc: nrc-cspi@0 {
+                compatible = "nrc80211";
+                reg = <0>;
+
+                /*
+                 * GPIO5 を IRQ pin として明示的に pinctrl 適用
+                 */
+                pinctrl-names = "default";
+                pinctrl-0 = <&nrc_irq_pin>;
+
+                /*
+                 * 元 DTS と同じ指定:
+                 * GPIO5, IRQ_TYPE_LEVEL_HIGH
+                 */
+                interrupt-parent = <&gpio>;
+                interrupts = <5 4>;
+
+                /*
+                 * まずは元と同じ 20 MHz。
+                 * まだ timeout する場合は 5000000 または 1000000 に落として試す。
+                 */
+                spi-max-frequency = <20000000>;
+
+                status = "okay";
+            };
+        };
+    };
+
+    /*
+     * GPIO5 IRQ pin
+     *
+     * Pi 5 / RP1 GPIO では brcm,pins ではなく、
+     * function/pins/input/bias-* 形式を使う。
+     */
+    fragment@1 {
+        target = <&gpio>;
+        __overlay__ {
+            nrc_irq_pin: nrc_irq_pin {
+                function = "gpio";
+                pins = "gpio5";
+                input;
+                bias-pull-down;
+            };
+        };
+    };
+
+    __overrides__ {
+        max_speed_hz = <&nrc>, "spi-max-frequency:0";
+    };
+};
+
