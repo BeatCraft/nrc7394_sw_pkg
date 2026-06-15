@@ -102,7 +102,11 @@ void nrc_mac_add_tlv_channel(struct sk_buff *skb,
 #endif
 int nrc_mac_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 		       struct ieee80211_sta *sta);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+void nrc_mac_stop(struct ieee80211_hw *hw, bool suspend);
+#else
 void nrc_mac_stop(struct ieee80211_hw *hw);
+#endif
 
 int nrc_mac_rx(struct nrc *nw, struct sk_buff *skb);
 void nrc_mac_trx_init(struct nrc *nw);

@@ -3,7 +3,11 @@
 ## Notice
 
 > [!NOTE]
-> The NRC7394 software package v1.0 includes an upgraded data structure for calibration and sysconfig. Therefore, to calibrate NRC7394 EVK, the v3.3.0 (Test Version 3.2) calibration tool (MFGT) should be used, and the EVK should be run on the NRC7394 software package v1.0 after it has been calibrated with the v3.3.0 (Test Version 3.2) calibration tool (MFGT). You can download this tool from the partner's FTP site.
+> **For Module Makers:**
+All NRC7394-based modules require system initialization and RF calibration before they can operate correctly. Please consult Newracom regarding these procedures prior to beginning module design.
+> 
+> **For Device Makers:**
+Devices may be built using NRC7394 chipsets directly or by integrating pre-calibrated modules from approved third-party OEMs. If you choose to use the chipset directly, please consult Newracom about the required initialization and calibration procedures before starting device design.
 
 > [!CAUTION]
 > The software package released here is specifically designed for the NRC7394 EVK, and the accompanying board data files in https://github.com/newracom/nrc7394_sw_pkg/tree/master/package/evk/binary and https://github.com/newracom/nrc7394_sw_pkg/tree/master/package/evk/sw_pkg/nrc_pkg/sw/firmware are intended solely for this model.
@@ -13,6 +17,7 @@
 > For support regarding the SAE Hash-to-Element (H2E), please refer to https://github.com/newracom/nrc7394_sw_pkg/blob/master/README-H2E.md
 
 ### Release roadmap
+- (2026.03.27) v1.3.2
 - (2025.08.08) v1.3.1
 - (2024.12.27) v1.3
 - (2024.12.06) v1.2.2 (hotfix)
@@ -23,7 +28,7 @@
 - (2023.04.05) v1.0 
 
 ### Latest stable release
-- [NRC7394_SW_PKG_v1.3.1](https://github.com/newracom/nrc7394_sw_pkg/releases/tag/v1.3.1)
+- [NRC7394_SW_PKG_v1.3.2](https://github.com/newracom/nrc7394_sw_pkg/releases/tag/v1.3.2)
 
 ### Release package contents
 - package: NRC7394 software package for global regulatory domains

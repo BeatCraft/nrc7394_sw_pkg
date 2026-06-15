@@ -143,6 +143,7 @@ enum WIM_EVENT_ID {
 	WIM_EVENT_LBT_ENABLED,
 	WIM_EVENT_LBT_DISABLED,
 	WIN_EVENT_CLEAN_TXQ_STA,
+	WIM_EVENT_REQ_DEAUTH_BY_FORCE,
 	WIM_EVENT_MAX,
 };
 
@@ -564,7 +565,7 @@ struct wim_channel_param {
 } __packed;
 
 
-#define WIM_MAX_BD_DATA_LEN		(540)
+#define WIM_MAX_BD_DATA_LEN		(768)
 struct wim_bd_param {
 	uint16_t type;
 	uint16_t length;
@@ -575,7 +576,7 @@ struct wim_bd_param {
 
 #define WIM_MAX_SCAN_SSID       (5)
 #define WIM_MAX_SCAN_BSSID      (2)
-#define WIM_MAX_SCAN_CHANNEL    (55)
+#define WIM_MAX_SCAN_CHANNEL    (70)
 #ifndef IEEE80211_MAX_SSID_LEN
 #define IEEE80211_MAX_SSID_LEN  (32)
 #endif
@@ -755,7 +756,8 @@ struct wim_drv_info_param {
 	uint32_t kern_ver			:12;
 	uint32_t supported_ch_width	:2;
 	uint32_t ps_pretend_flag	:1;
-	uint32_t reserved			:11;
+	uint32_t sub_xtal_bypass	:1;
+	uint32_t reserved			:10;
 	uint32_t vendor_oui;
 	uint32_t deepsleep_gpio_dir;
 	uint32_t deepsleep_gpio_out;
@@ -769,6 +771,7 @@ struct wim_drv_info_param {
 	uint8_t auth_control_slot;
 	uint8_t auth_control_ti_min;
 	uint8_t auth_control_ti_max;
+	int8_t loc_1m_prim_ch;
 } __packed;
 WIM_DECLARE(wim_drv_info);
 

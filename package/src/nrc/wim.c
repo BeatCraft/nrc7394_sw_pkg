@@ -922,7 +922,11 @@ static int nrc_wim_event_handler(struct nrc *nw,
 		nrc_wim_handle_req_deauth(nw);
 		break;
 	case WIM_EVENT_CSA:
+#if KERNEL_VERSION(6, 12, 0) <= NRC_TARGET_KERNEL_VERSION
+		ieee80211_csa_finish(vif, vif->bss_conf.link_id);
+#else
 		ieee80211_csa_finish(vif);
+#endif
 		break;
 	case WIM_EVENT_CH_SWITCH:
 #if KERNEL_VERSION(6, 7, 0) <= NRC_TARGET_KERNEL_VERSION
@@ -946,6 +950,9 @@ static int nrc_wim_event_handler(struct nrc *nw,
 		} else {
 			WARN_ON(true);
 		}
+		break;
+	case WIM_EVENT_REQ_DEAUTH_BY_FORCE:
+		ieee80211_connection_loss(vif);
 		break;
 	}
 

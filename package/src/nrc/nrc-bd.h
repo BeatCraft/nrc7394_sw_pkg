@@ -17,7 +17,7 @@
 #ifndef _NRC_BD_H_
 #define _NRC_BD_H_
 
-#define NRC_BD_MAX_CH_LIST		45
+#define NRC_BD_MAX_CH_LIST		63
 
 #define BD_DEBUG				0
 
