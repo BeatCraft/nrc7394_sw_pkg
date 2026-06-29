@@ -1,0 +1,6 @@
+dts と /etc/modprobe.d/raspi-blacklist.conf で無効にしている
+RasPi 内蔵無線LAN interface を有効に戻して
+start.py と ap_halow_sae.conf をこのディレクトリ内のものと置き換えてから
+start.py 1 3 JP すると内蔵 11ag interface をつかって AP を起動できます。
+この際には 11ah インタフェースは使用できません。
+11ag AP を nrc_pkg で作る必要があり用意しました。
