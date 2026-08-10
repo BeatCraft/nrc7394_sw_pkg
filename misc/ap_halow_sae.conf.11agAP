@@ -4,7 +4,8 @@ country_code=JP
 interface=wlan0
 wds_sta=1
 bridge=br0
-
+ap_isolate=0
+multicast_to_unicast=1
 
 driver=nl80211
 
